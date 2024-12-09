@@ -4,16 +4,17 @@ from pprint import pprint
 from seml.config import generate_configs, read_config
 
 from chemCPA.experiments_run import ExperimentWrapper
-
+from tensorboardX import SummaryWriter
 if __name__ == "__main__":
     exp = ExperimentWrapper(init_all=False)
 
     # this is how seml loads the config file internally
+    config_fp = "manual_run.yaml"
     assert Path(
-        "simon/config_sciplex3_interactive.yaml"
+        config_fp
     ).exists(), "config file not found"
     seml_config, slurm_config, experiment_config = read_config(
-        "simon/config_sciplex3_interactive.yaml"
+        config_fp
     )
     # we take the first config generated
     configs = generate_configs(experiment_config)
@@ -38,5 +39,5 @@ if __name__ == "__main__":
     )
     # setup the torch DataLoader
     exp.update_datasets()
-
+    
     exp.train(**args["training"])

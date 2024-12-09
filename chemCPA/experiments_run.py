@@ -17,6 +17,7 @@ from chemCPA.embedding import get_chemical_representation
 from chemCPA.model import ComPert
 from chemCPA.profiling import Profiler
 from chemCPA.train import custom_collate, evaluate, evaluate_r2, evaluate_r2_sc
+from tensorboardX import SummaryWriter
 
 ex = Experiment()
 seml.setup_logger(ex)
@@ -279,6 +280,7 @@ class ExperimentWrapper:
         run_eval_r2: bool = True,
         run_eval_r2_sc: bool = True,
         run_eval_logfold: bool = True,
+        writer : SummaryWriter = None
     ):
 
         print(f"CWD: {os.getcwd()}")
@@ -294,14 +296,14 @@ class ExperimentWrapper:
             # all items are initialized to 0.0
             epoch_training_stats = defaultdict(float)
 
-            for data in self.datasets["loader_tr"]:
+            for batch_idx, data in enumerate(self.datasets["loader_tr"]):
                 if self.dataset.use_drugs_idx:
                     genes, drugs_idx, dosages, degs, covariates = (
-                        data[0],
-                        data[1],
-                        data[2],
-                        data[3],
-                        data[4:],
+                        data[0], # expression profile
+                        data[1], # drug index
+                        data[2], # dose
+                        data[3], # binary mask indicating DEG, same shape as expression profile
+                        data[4:], # covariates (cell line)
                     )
                     training_stats = self.autoencoder.update(
                         genes=genes,
@@ -326,12 +328,15 @@ class ExperimentWrapper:
             self.autoencoder.scheduler_adversary.step()
             if self.autoencoder.num_drugs > 0:
                 self.autoencoder.scheduler_dosers.step()
-
+            
             for key, val in epoch_training_stats.items():
                 epoch_training_stats[key] = val / len(self.datasets["loader_tr"])
                 if key not in self.autoencoder.history.keys():
                     self.autoencoder.history[key] = []
                 self.autoencoder.history[key].append(val)
+                if writer is not None:
+                    writer.add_scalar(f'train/{key}', val, epoch)
+                    
             self.autoencoder.history["epoch"].append(epoch)
 
             # print some stats for each epoch
@@ -364,6 +369,12 @@ class ExperimentWrapper:
                     #     self.autoencoder,
                     #     self.datasets["test_treated"],
                     # )
+                    evaluation_stats["ood"] = evaluate_r2(
+                        self.autoencoder,
+                        self.datasets["ood"],
+                        self.datasets["test_control"].genes
+                    )
+
                     self.autoencoder.train()
                 test_score = (
                     np.mean(evaluation_stats["test"])
@@ -376,13 +387,23 @@ class ExperimentWrapper:
                 #     if evaluation_stats["test"]
                 #     else None
                 # )
+                if writer is not None:
+                    entry_names=['all_mean_r2', 'all_var_r2', 'DEG_mean_r2', 'DEG_var_r2']
 
+                    # write test
+                    for i, entry in enumerate(entry_names):
+                        writer.add_scalar(f'test/{entry}', evaluation_stats["test"][i], epoch)
+                    # write ood
+                    for i, entry in enumerate(entry_names):
+                        writer.add_scalar(f'ood/{entry}', evaluation_stats["ood"][i], epoch)
+                
+                
                 test_score_is_nan = test_score is not None and math.isnan(test_score)
                 autoenc_early_stop = self.autoencoder.early_stopping(test_score)
                 stop = stop or autoenc_early_stop or test_score_is_nan
                 # we don't do disentanglement if the loss was NaN
                 # run_full_eval determines whether we run the full evaluate also during training, or only at the end
-                if (
+                if False and (
                     (full_eval_during_train or stop)
                     and not reconst_loss_is_nan
                     and not test_score_is_nan
@@ -422,7 +443,10 @@ class ExperimentWrapper:
                 # Ignore early stopping and save results at the end -> match data in mongoDB
                 if save_checkpoints and stop:
                     logging.info(f"Updating checkpoint at epoch {epoch}")
-                    file_name = f"{ex.observers[0].run_entry['config_hash']}.pt"
+                    try:
+                        file_name = f"{ex.observers[0].run_entry['config_hash']}.pt"
+                    except TypeError:
+                        file_name = "ckpt.pt"
                     torch.save(
                         (
                             self.autoencoder.state_dict(),

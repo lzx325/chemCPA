@@ -250,7 +250,6 @@ class Dataset:
             if self.drugs_names_unique_sorted is not None
             else 0
         )
-
         self.indices = {
             "all": list(range(len(self.genes))),
             "control": np.where(data.obs["control"] == 1)[0].tolist(),

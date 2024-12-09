@@ -765,7 +765,7 @@ class ComPert(torch.nn.Module):
         adv_drugs_grad_penalty = torch.tensor([0.0], device=self.device)
         adv_covs_grad_penalty = torch.tensor([0.0], device=self.device)
 
-        if (self.iteration % self.hparams["adversary_steps"]) == 0:
+        if not self.hparams["disable_adversary"] and (self.iteration % self.hparams["adversary_steps"]) == 0:
 
             def compute_gradient_penalty(output, input):
                 grads = torch.autograd.grad(output, input, create_graph=True)
@@ -796,12 +796,18 @@ class ComPert(torch.nn.Module):
             self.optimizer_autoencoder.zero_grad()
             if self.num_drugs > 0:
                 self.optimizer_dosers.zero_grad()
-            (
-                reconstruction_loss
-                - self.hparams["reg_adversary"] * adversary_drugs_loss
-                - self.hparams["reg_adversary_cov"] * adversary_covariates_loss
-                + self.hparams["reg_multi_task"] * multi_task_loss
-            ).backward()
+            if self.hparams["disable_adversary"]:
+                (
+                    reconstruction_loss
+                    + self.hparams["reg_multi_task"] * multi_task_loss
+                ).backward()
+            else:
+                (
+                    reconstruction_loss
+                    - self.hparams["reg_adversary"] * adversary_drugs_loss
+                    - self.hparams["reg_adversary_cov"] * adversary_covariates_loss
+                    + self.hparams["reg_multi_task"] * multi_task_loss
+                ).backward()
             self.optimizer_autoencoder.step()
             if self.num_drugs > 0:
                 self.optimizer_dosers.step()
